@@ -8,7 +8,8 @@
 #
 # Environment (all optional, mainly for tests):
 #   WCC_STATE_DIR     where state is kept
-#   WCC_EXTRA_DIRS    extra WoW folders from settings, separated by ':'
+#   WCC_WOW_DIR       the WoW folder from settings; one path, used as it is
+#   WCC_EXTRA_DIRS    more WoW folders, separated by ':'
 #   WCC_SEARCH_ROOTS  folders searched by `installs --rescan`, separated by ':'
 #   WCC_PROC_DIR      process table to read instead of /proc
 #   WCC_NOW           current time as epoch seconds
@@ -32,6 +33,9 @@ INSTALLS_FILE="$STATE_DIR/installs.json"
 SESSIONS_FILE="$STATE_DIR/sessions.jsonl"
 CACHE_DIR="$STATE_DIR/cache"
 POLL_SECONDS=15
+# A gap this long between sightings of the same game means the PC slept or the
+# shell was away; the time in between is not counted as play.
+GAP_SECONDS=300
 KEEP_DAYS=90
 
 now() {
@@ -89,7 +93,9 @@ stored_installs() {
 }
 
 learn_install() {
-  local path="$1" source="$2" current
+  local path source="$2" current
+  # One spelling per folder, so a symlinked path is not listed twice.
+  path=$(realpath -- "$1" 2>/dev/null) || return 0
   current=$(stored_installs)
   if jq -e --arg p "$path" 'any(.[]; .path == $p)' <<<"$current" >/dev/null; then
     return 0
@@ -101,8 +107,9 @@ learn_install() {
 # Prints one version folder per line for a folder the player named, which may
 # be a version folder or the "World of Warcraft" folder above them.
 expand_install_dir() {
-  local dir="${1%/}" sub
-  [[ -d $dir ]] || return 0
+  local dir sub
+  [[ -d $1 ]] || return 0
+  dir=$(realpath -- "$1" 2>/dev/null) || return 0
   if is_flavor_dir "$dir"; then
     echo "$dir"
     return 0
@@ -115,6 +122,8 @@ expand_install_dir() {
 
 manual_installs() {
   local dirs=() dir
+  # Wine paths can hold a colon (dosdevices/c:), so the setting is never split.
+  [[ -n ${WCC_WOW_DIR:-} ]] && expand_install_dir "${WCC_WOW_DIR/#\~/$HOME}"
   [[ -n ${WCC_EXTRA_DIRS:-} ]] || return 0
   IFS=':' read -r -a dirs <<<"$WCC_EXTRA_DIRS"
   for dir in "${dirs[@]}"; do
@@ -193,6 +202,15 @@ addon_state() {
   fi
 }
 
+# Someone has logged in to this version: the game made an account folder.
+was_played() {
+  local account
+  for account in "$1"/WTF/Account/*/; do
+    [[ -d $account ]] && return 0
+  done
+  return 1
+}
+
 data_files() {
   local path="$1" file
   for file in "$path"/WTF/Account/*/SavedVariables/"$ADDON_NAME".lua; do
@@ -213,8 +231,9 @@ cmd_installs() {
       --arg addon "$(addon_state "$path")" \
       --arg version "$(toc_version "$path/Interface/AddOns/$ADDON_NAME/$ADDON_NAME.toc")" \
       --argjson hasData "$([[ -n $(data_files "$path") ]] && echo true || echo false)" \
+      --argjson played "$(was_played "$path" && echo true || echo false)" \
       '{path: $path, flavor: $flavor, label: $label, source: $source,
-        addon: $addon, addonVersion: $version, hasData: $hasData}'
+        addon: $addon, addonVersion: $version, hasData: $hasData, played: $played}'
   done < <(install_paths) | jq -s -c '.'
 }
 
@@ -376,20 +395,27 @@ update_sessions() {
     --argjson now "$current" \
     --argjson running "$running" \
     --argjson poll "$POLL_SECONDS" \
+    --argjson gap "$GAP_SECONDS" \
     --argjson keep "$((KEEP_DAYS * 86400))" '
     def close:
       if .end == null then
         .end = (if $now >= .last and ($now - .last) <= ($poll * 2) then $now else .last end)
       else . end;
-    def same: $running != null and .pid == $running.pid and .pstart == $running.pstart;
+    def same: .pid == $running.pid and .pstart == $running.pstart;
     (if $running == null then map(close)
-     elif any(.[]; same) then
-       map(if same then .end = null | .last = ([.last, $now] | max) else close end)
      else
-       map(close) + [{
-         start: ([$running.started, $now] | min), last: $now, end: null,
-         flavor: $running.flavor, pid: $running.pid, pstart: $running.pstart
-       }]
+       # The newest record for this process, if there is one.
+       ([to_entries[] | select(.value | same) | .key] | last) as $i
+       | if $i != null and ($now - .[$i].last) <= $gap then
+           to_entries | map(.key as $k | .value
+             | if $k == $i then .end = null | .last = ([.last, $now] | max) else close end)
+         else
+           map(close) + [{
+             start: (if $i != null then $now else ([$running.started, $now] | min) end),
+             last: $now, end: null,
+             flavor: $running.flavor, pid: $running.pid, pstart: $running.pstart
+           }]
+         end
      end)
     | map(select(.end == null or .end >= ($now - $keep)))
     | .[]') || return 1
@@ -398,13 +424,32 @@ update_sessions() {
   printf '%s' "${updated:+$updated$'\n'}" | write_atomic "$SESSIONS_FILE"
 }
 
+# First second of a local calendar day, given as YYYY-MM-DD. Where the clocks
+# go forward at midnight the day has no 00:00, so this walks up to the first
+# moment that belongs to the day.
+day_start() {
+  local day="$1" at
+  if at=$(date -d "$day 00:00:00" +%s 2>/dev/null); then
+    echo "$at"
+    return 0
+  fi
+  at=$(date -d "$day 12:00:00" +%s 2>/dev/null) || { echo 0; return 0; }
+  at=$((at - 13 * 3600))
+  while [[ $(date -d "@$at" +%F) != "$day" ]]; do
+    at=$((at + 900))
+  done
+  echo "$at"
+}
+
 cmd_sessions() {
-  local current day dow today_start week_start
+  local current day dow monday today_start week_start
   current=$(now)
   day=$(date -d "@$current" +%F)
   dow=$(date -d "@$current" +%u)
-  today_start=$(date -d "$day 00:00:00" +%s)
-  week_start=$(date -d "$day -$((dow - 1)) days 00:00:00" +%s)
+  # Counted from noon, which exists on every day.
+  monday=$(date -d "$day 12:00:00 $((dow - 1)) days ago" +%F)
+  today_start=$(day_start "$day")
+  week_start=$(day_start "$monday")
   read_sessions | jq -c \
     --argjson now "$current" \
     --argjson today "$today_start" \
@@ -428,6 +473,7 @@ setup_state() {
     elif ($characters | length) == 0 then
       (if any($installs[]; .addon == "missing") then "addon-missing" else "no-data" end)
     elif any($installs[]; .addon == "outdated") then "addon-outdated"
+    elif any($installs[]; .addon == "missing" and .played) then "addon-missing-some"
     else "ready" end'
 }
 

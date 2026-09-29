@@ -38,7 +38,7 @@ sandbox() {
   export WCC_PROC_DIR="$SANDBOX/proc"
   export WCC_SEARCH_ROOTS="$SANDBOX/search"
   export WCC_NOW=1000000
-  unset WCC_EXTRA_DIRS WCC_DEMO
+  unset WCC_EXTRA_DIRS WCC_WOW_DIR WCC_DEMO
   mkdir -p "$WCC_PROC_DIR" "$SANDBOX/search"
   echo "btime 900000" >"$WCC_PROC_DIR/stat"
   # The real folder name has spaces and brackets in it, so the fixtures do too.
@@ -235,9 +235,9 @@ test_characters_sorted_across_installs_and_accounts() {
   forever=$(make_install _classic_beta_)
   export WCC_EXTRA_DIRS="$GAMES"
   make_data "$retail" "111#1" "$(character Oldmain 80 100)"
-  make_data "$forever" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$forever" "111#1" "$(character Exampla 42 300)"
   make_data "$forever" "222#2" "$(character Bankalt 5 200)"
-  eq "most recent first" "$("$WCC" characters | jq -r '[.[].name] | join(",")')" "Sharpmonk,Bankalt,Oldmain"
+  eq "most recent first" "$("$WCC" characters | jq -r '[.[].name] | join(",")')" "Exampla,Bankalt,Oldmain"
   eq "version label attached" "$("$WCC" characters | jq -r '.[0].label')" "Forever"
 }
 
@@ -246,8 +246,8 @@ test_characters_same_name_in_two_versions() {
   retail=$(make_install _retail_)
   forever=$(make_install _classic_beta_)
   export WCC_EXTRA_DIRS="$GAMES"
-  make_data "$retail" "111#1" "$(character Sharpmonk 80 100)"
-  make_data "$forever" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$retail" "111#1" "$(character Exampla 80 100)"
+  make_data "$forever" "111#1" "$(character Exampla 42 300)"
   eq "both kept" "$("$WCC" characters | jq length)" "2"
   eq "ids differ" "$("$WCC" characters | jq -r '[.[].id] | unique | length')" "2"
 }
@@ -265,7 +265,7 @@ test_characters_derived_values() {
   local install
   install=$(make_install _retail_)
   export WCC_EXTRA_DIRS="$install"
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300 '{"xp":610,"xpMax":1000,"rested":180,"money":3124005,"session":{"startedAt":1,"startLevel":40,"xpGained":900,"moneyDelta":-10250}}')"
+  make_data "$install" "111#1" "$(character Exampla 42 300 '{"xp":610,"xpMax":1000,"rested":180,"money":3124005,"session":{"startedAt":1,"startLevel":40,"xpGained":900,"moneyDelta":-10250}}')"
   local out
   out=$("$WCC" characters | jq -c '.[0]')
   eq "xp percent" "$(jq -r .xpPercent <<<"$out")" "61"
@@ -300,7 +300,7 @@ test_characters_damaged_file_uses_last_good() {
   local install
   install=$(make_install _retail_)
   export WCC_EXTRA_DIRS="$install"
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
   eq "first read" "$("$WCC" characters | jq -r '.[0].level')" "42"
   echo 'WoWCharacterCardDB = { ["data"] = "e30' >"$install/WTF/Account/111#1/SavedVariables/WoWCharacterCard.lua"
   eq "half-written file" "$("$WCC" characters | jq -r '.[0].level')" "42"
@@ -329,7 +329,7 @@ test_characters_ignores_backup_files() {
   local install
   install=$(make_install _retail_)
   export WCC_EXTRA_DIRS="$install"
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
   cp "$install/WTF/Account/111#1/SavedVariables/WoWCharacterCard.lua" \
     "$install/WTF/Account/111#1/SavedVariables/WoWCharacterCard.lua.bak"
   eq "counted once" "$("$WCC" characters | jq length)" "1"
@@ -409,9 +409,9 @@ test_install_addon_keeps_saved_data() {
   local install
   install=$(make_install _retail_)
   export WCC_EXTRA_DIRS="$install"
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
   "$WCC" install-addon >/dev/null
-  eq "data still read" "$("$WCC" characters | jq -r '.[0].name')" "Sharpmonk"
+  eq "data still read" "$("$WCC" characters | jq -r '.[0].name')" "Exampla"
 }
 
 test_installs_learned_from_running_game() {
@@ -484,10 +484,10 @@ test_sessions_resume_after_shell_restart() {
   install=$(make_install _retail_)
   make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
   WCC_NOW=1000000 "$WCC" tick >/dev/null
-  # The shell was away for ten minutes; the same game is still running.
-  WCC_NOW=1000600 "$WCC" tick >/dev/null
+  # The shell was away for a minute; the same game is still running.
+  WCC_NOW=1000060 "$WCC" tick >/dev/null
   eq "still one session" "$(sessions_file | wc -l)" "1"
-  eq "covers the gap" "$(sessions_file | jq -r .last)" "1000600"
+  eq "covers the gap" "$(sessions_file | jq -r .last)" "1000060"
 }
 
 test_sessions_reopen_same_process() {
@@ -618,7 +618,7 @@ test_status_setup_states() {
   eq "addon missing" "$("$WCC" status | jq -r .setup)" "addon-missing"
   "$WCC" install-addon >/dev/null
   eq "no data" "$("$WCC" status | jq -r .setup)" "no-data"
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
   eq "ready" "$("$WCC" status | jq -r .setup)" "ready"
   sed -i 's/^## Version:.*/## Version: 0.1.0/' "$install/Interface/AddOns/WoWCharacterCard/WoWCharacterCard.toc"
   eq "addon outdated" "$("$WCC" status | jq -r .setup)" "addon-outdated"
@@ -628,13 +628,13 @@ test_status_shape() {
   local install out
   install=$(make_install _classic_beta_)
   make_proc 10 WowB.exe 'x -uid wow_classic_beta' "$install" 9999000
-  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
   out=$("$WCC" tick)
   eq "ok" "$(jq -r .ok <<<"$out")" "true"
   eq "running" "$(jq -r .running.label <<<"$out")" "Forever"
   eq "session" "$(jq -r .session.seconds <<<"$out")" "10"
   eq "playtime" "$(jq -r .playtime.today <<<"$out")" "10"
-  eq "character" "$(jq -r '.characters[0].name' <<<"$out")" "Sharpmonk"
+  eq "character" "$(jq -r '.characters[0].name' <<<"$out")" "Exampla"
   eq "bundled version" "$(jq -r .addonVersion <<<"$out")" "1.0.0"
 }
 
@@ -664,6 +664,72 @@ test_status_demo_mode() {
   eq "three characters" "$(jq -r '.characters | length' <<<"$out")" "3"
   eq "writes nothing" "$([[ -e $WCC_STATE_DIR ]] && echo yes || echo no)" "no"
   eq "status matches tick" "$(WCC_DEMO=1 "$WCC" status | jq -r .setup)" "ready"
+}
+
+test_sessions_suspend_is_not_play_time() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  # The PC slept for eight hours with the game still open.
+  WCC_NOW=1028815 "$WCC" tick >/dev/null
+  eq "sleep splits the session" "$(sessions_file | wc -l)" "2"
+  eq "first ends when last seen" "$(sessions_file | head -n 1 | jq -r .end)" "1000015"
+  eq "second starts on waking" "$(sessions_file | tail -n 1 | jq -r .start)" "1028815"
+  eq "sleep is not counted" "$(WCC_NOW=1028815 "$WCC" sessions | jq -r .week)" "15"
+  WCC_NOW=1028830 "$WCC" tick >/dev/null
+  eq "only the newest record moves" "$(sessions_file | head -n 1 | jq -r .end)" "1000015"
+  eq "still two sessions" "$(sessions_file | wc -l)" "2"
+  eq "counted after waking" "$(WCC_NOW=1028830 "$WCC" sessions | jq -r .week)" "30"
+}
+
+test_sessions_day_without_midnight() {
+  # In Santiago the clocks go from 23:59 straight to 01:00 on this date, so
+  # the day has no midnight.
+  local noon
+  noon=$(TZ=America/Santiago date -d '2026-09-06 13:00:00' +%s)
+  mkdir -p "$WCC_STATE_DIR"
+  echo "{\"start\":$((noon - 3600)),\"last\":$noon,\"end\":$noon,\"flavor\":\"_retail_\",\"pid\":1,\"pstart\":1}" >"$WCC_STATE_DIR/sessions.jsonl"
+  local out
+  out=$(TZ=America/Santiago WCC_NOW=$noon "$WCC" sessions 2>&1)
+  eq "today still counted" "$(jq -r .today <<<"$out" 2>/dev/null)" "3600"
+  eq "status still prints" "$(TZ=America/Santiago WCC_NOW=$noon "$WCC" status 2>/dev/null | jq -r .ok)" "true"
+}
+
+test_status_played_version_without_addon() {
+  local retail classic
+  retail=$(make_install _retail_)
+  classic=$(make_install _classic_)
+  export WCC_EXTRA_DIRS="$GAMES"
+  "$WCC" install-addon "$retail" >/dev/null
+  make_data "$retail" "111#1" "$(character Exampla 42 300)"
+  eq "unplayed version is left alone" "$("$WCC" status | jq -r .setup)" "ready"
+  mkdir -p "$classic/WTF/Account/111#1"
+  eq "played version is offered the addon" "$("$WCC" status | jq -r .setup)" "addon-missing-some"
+  eq "install says it was played" "$("$WCC" installs | jq -r '.[] | select(.flavor == "_classic_") | .played')" "true"
+  "$WCC" install-addon >/dev/null
+  eq "ready once installed" "$("$WCC" status | jq -r .setup)" "ready"
+}
+
+test_installs_same_folder_two_spellings() {
+  local install
+  install=$(make_install _retail_)
+  ln -s "$SANDBOX/prefix" "$SANDBOX/link"
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 100
+  make_data "$install" "111#1" "$(character Exampla 42 300)"
+  export WCC_EXTRA_DIRS="$SANDBOX/link/drive_c/Program Files (x86)/World of Warcraft"
+  "$WCC" tick >/dev/null
+  eq "listed once" "$("$WCC" installs | jq length)" "1"
+  eq "character listed once" "$("$WCC" characters | jq length)" "1"
+}
+
+test_installs_folder_with_colon() {
+  # Wine's own layout: dosdevices/c: points at drive_c.
+  GAMES="$SANDBOX/prefix/dosdevices/c:/Program Files (x86)/World of Warcraft"
+  make_install _retail_ >/dev/null
+  export WCC_WOW_DIR="$GAMES"
+  eq "found" "$("$WCC" installs | jq -r '.[0].flavor')" "_retail_"
 }
 
 # --------------------------------------------------------------------- main
