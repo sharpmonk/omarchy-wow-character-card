@@ -77,6 +77,14 @@ Panel {
   onWowFolderChanged: pushSettings()
   Component.onCompleted: bindService()
 
+  Connections {
+    target: root.service
+    function onOpenRequested(screen) {
+      var window = root.QsWindow.window
+      if (window && window.screen && window.screen.name === screen) root.open()
+    }
+  }
+
   Timer {
     interval: 200
     running: root.service === null

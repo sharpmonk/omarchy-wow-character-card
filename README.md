@@ -96,6 +96,12 @@ tests/run.sh
 The tests need `lua5.1` (Arch package `lua51`) and `jq`. They use made-up
 folders and never touch a real WoW install.
 
+To open the panel on a chosen monitor, for a key binding or a screenshot:
+
+```bash
+omarchy-shell sharpmonk.wow-character-card.service openOn DP-2
+```
+
 To see the widget with made-up characters, for screenshots:
 
 ```bash

@@ -35,6 +35,10 @@ Item {
 
   readonly property int pollMs: 15000
 
+  // Asks the widget on one monitor to open its panel. A plain `open` reaches
+  // only one bar, and not one the caller can choose.
+  signal openRequested(string screen)
+
   readonly property string script:
     decodeURIComponent(Qt.resolvedUrl("bin/wcc").toString().replace(/^file:\/\//, ""))
 
@@ -146,6 +150,12 @@ Item {
     function refresh(): string {
       root.refresh()
       return "refreshing"
+    }
+
+    // Opens the panel on the named monitor, for example DP-2.
+    function openOn(screen: string): string {
+      root.openRequested(screen)
+      return "asked " + screen
     }
 
     // Made-up characters, for taking screenshots.
