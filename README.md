@@ -44,6 +44,13 @@ Nothing is sent anywhere. The plugin makes no network connections.
 omarchy plugin add https://github.com/sharpmonk/omarchy-wow-character-card.git --enable
 ```
 
+If that ends with "omarchy-shell is not responding", the plugin was added
+while the shell was still reloading. Switch it on with:
+
+```bash
+omarchy plugin enable sharpmonk.wow-character-card
+```
+
 Then:
 
 1. Launch WoW once. The plugin finds the install from the running game.
