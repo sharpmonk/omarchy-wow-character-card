@@ -83,7 +83,7 @@ end
 
 local function modernGame()
   return {
-    modern = true, now = 1000, name = "Sharpmonk", realm = "PvE 2",
+    modern = true, now = 1000, name = "Exampla", realm = "Demo Realm",
     class = "Monk", classFile = "MONK", race = "Pandaren", faction = "Alliance",
     level = 41, cap = 70, xp = 900, xpMax = 1000, rested = 180, money = 5000,
   }
@@ -102,8 +102,8 @@ do
   world.fire("ADDON_LOADED", "WoWCharacterCard")
   world.fire("PLAYER_ENTERING_WORLD", true, false)
   local c = world.character()
-  eq("name", c.name, "Sharpmonk")
-  eq("realm", c.realm, "PvE 2")
+  eq("name", c.name, "Exampla")
+  eq("realm", c.realm, "Demo Realm")
   eq("class", c.class, "Monk")
   eq("class file", c.classFile, "MONK")
   eq("race", c.race, "Pandaren")
@@ -151,6 +151,80 @@ do
   eq("logout stamps time", world.character().updatedAt, 1400)
 end
 
+-- Level-up with other events landing in the middle -------------------------
+do
+  -- A quest hand-in pays gold and XP together. The gold event can arrive
+  -- after the level-up event while the game still reports the old XP.
+  local game = modernGame()
+  game.xp, game.xpMax = 950, 1000
+  local world = boot(game, nil)
+  world.fire("ADDON_LOADED", "WoWCharacterCard")
+  world.fire("PLAYER_ENTERING_WORLD", true, false)
+  world.fire("PLAYER_LEVEL_UP", 42)
+  game.now, game.money = 1100, 6000
+  world.fire("PLAYER_MONEY")
+  eq("nothing recorded mid level-up", world.character().updatedAt, 1000)
+  game.now, game.level, game.xp, game.xpMax = 1200, 42, 200, 1200
+  world.fire("PLAYER_XP_UPDATE")
+  local c = world.character()
+  eq("xp across level-up with gold in between", c.session.xpGained, 250)
+  eq("gold still counted after level-up", c.session.moneyDelta, 1000)
+  eq("level recorded", c.level, 42)
+end
+
+do
+  -- The other order: new XP figures arrive while the game still reports the
+  -- old level, and the level-up event comes after.
+  local game = modernGame()
+  game.xp, game.xpMax = 950, 1000
+  local world = boot(game, nil)
+  world.fire("ADDON_LOADED", "WoWCharacterCard")
+  world.fire("PLAYER_ENTERING_WORLD", true, false)
+  game.now, game.xp, game.xpMax = 1100, 200, 1200
+  world.fire("PLAYER_XP_UPDATE")
+  eq("half-changed snapshot is not recorded", world.character().xpMax, 1000)
+  world.fire("PLAYER_LEVEL_UP", 42)
+  game.now, game.level = 1200, 42
+  world.runTimers()
+  local c = world.character()
+  eq("xp across level-up when xp arrives first", c.session.xpGained, 250)
+  eq("level recorded when xp arrives first", c.level, 42)
+end
+
+-- Events that arrive before the login event --------------------------------
+do
+  local game = modernGame()
+  game.modern = false
+  local world = boot(game, nil)
+  world.fire("ADDON_LOADED", "WoWCharacterCard")
+  world.fire("PLAYER_ENTERING_WORLD")
+  game.now, game.xp = 1100, 950
+  world.fire("PLAYER_XP_UPDATE")
+  world.fire("PLAYER_LOGOUT")
+  local saved = WoWCharacterCardDB
+
+  -- Next day. The game sends a gold event before the login event, and this
+  -- old version does not say whether it is a login or a reload.
+  game.now = 90000
+  world = boot(game, saved)
+  world.fire("ADDON_LOADED", "WoWCharacterCard")
+  world.fire("PLAYER_MONEY")
+  eq("early event records nothing", world.character().updatedAt, 1100)
+  world.fire("PLAYER_ENTERING_WORLD")
+  eq("next day starts a new session", world.character().session.startedAt, 90000)
+  eq("next day resets xp gained", world.character().session.xpGained, 0)
+end
+
+-- A record damaged by hand must not raise an error in the game ---------------
+do
+  local game = modernGame()
+  local world = boot(game, { schema = 1, characters = { ["Exampla-Demo Realm"] = 5 } })
+  world.fire("ADDON_LOADED", "WoWCharacterCard")
+  local ok = pcall(world.fire, "PLAYER_ENTERING_WORLD", true, false)
+  eq("damaged record does not raise", ok, true)
+  eq("damaged record is replaced", world.character().level, 41)
+end
+
 -- Reload, then a later fresh login -----------------------------------------
 do
   local game = modernGame()
@@ -190,7 +264,7 @@ do
   world.fire("ADDON_LOADED", "WoWCharacterCard")
   world.fire("PLAYER_ENTERING_WORLD", true, false)
   eq("new character recorded", world.character().level, 5)
-  eq("first character kept", WoWCharacterCardDB.characters["Sharpmonk-PvE 2"].level, 41)
+  eq("first character kept", WoWCharacterCardDB.characters["Exampla-Demo Realm"].level, 41)
 end
 
 -- Max level ----------------------------------------------------------------

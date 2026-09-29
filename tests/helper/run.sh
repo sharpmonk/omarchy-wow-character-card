@@ -635,7 +635,7 @@ test_status_shape() {
   eq "session" "$(jq -r .session.seconds <<<"$out")" "10"
   eq "playtime" "$(jq -r .playtime.today <<<"$out")" "10"
   eq "character" "$(jq -r '.characters[0].name' <<<"$out")" "Exampla"
-  eq "bundled version" "$(jq -r .addonVersion <<<"$out")" "1.0.0"
+  eq "bundled version" "$(jq -r .addonVersion <<<"$out")" "1.0.1"
 }
 
 test_status_does_not_write() {

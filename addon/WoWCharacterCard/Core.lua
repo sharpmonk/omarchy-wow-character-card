@@ -53,8 +53,15 @@ function Core.XpDelta(prev, snapshot)
   return 0
 end
 
-function Core.BeginSession(db, key, snapshot, now, isReload)
+-- A record that is not a table was damaged by hand; treat it as absent.
+local function previous(db, key)
   local prev = db.characters[key]
+  if type(prev) ~= "table" then return nil end
+  return prev
+end
+
+function Core.BeginSession(db, key, snapshot, now, isReload)
+  local prev = previous(db, key)
   local continuing = false
   if prev and type(prev.session) == "table" then
     if isReload == nil then
@@ -80,9 +87,16 @@ function Core.BeginSession(db, key, snapshot, now, isReload)
 end
 
 function Core.Update(db, key, snapshot, now)
-  local prev = db.characters[key]
+  local prev = previous(db, key)
   if not prev or type(prev.session) ~= "table" then
     return Core.BeginSession(db, key, snapshot, now, false)
+  end
+
+  -- A level cannot change its XP ceiling. When it seems to, the game is half
+  -- way through a level-up: new XP figures, old level. Wait for the rest.
+  if snapshot.level == prev.level and snapshot.xpMax and prev.xpMax
+    and snapshot.xpMax ~= prev.xpMax then
+    return prev
   end
 
   local record = copy(snapshot)

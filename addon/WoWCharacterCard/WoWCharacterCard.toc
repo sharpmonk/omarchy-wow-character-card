@@ -2,7 +2,7 @@
 ## Title: WoW Character Card
 ## Notes: Records your character's level, XP, gold and bags for the WoW Character Card desktop widget. Has no in-game window.
 ## Author: sharpmonk
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: WoWCharacterCardDB
 
 Json.lua

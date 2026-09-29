@@ -45,8 +45,8 @@ eq("base64 longer", Base64.Encode("foobar"), "Zm9vYmFy")
 eq("base64 high bytes", Base64.Encode("\255\254\253"), "//79")
 
 -- Core: keys and db -----------------------------------------------------
-eq("key", Core.Key("Sharpmonk", "PvE 2"), "Sharpmonk-PvE 2")
-eq("key without name", Core.Key(nil, "PvE 2"), nil)
+eq("key", Core.Key("Exampla", "Demo Realm"), "Exampla-Demo Realm")
+eq("key without name", Core.Key(nil, "Demo Realm"), nil)
 eq("initdb from nil", Core.InitDB(nil).schema, 1)
 eq("initdb repairs characters", type(Core.InitDB({ characters = "bad" }).characters), "table")
 
@@ -61,7 +61,7 @@ eq("xp with no previous record", Core.XpDelta(nil, { level = 5, xp = 100 }), 0)
 
 -- Core: sessions --------------------------------------------------------
 local db = Core.InitDB(nil)
-local key = "Sharpmonk-PvE 2"
+local key = "Exampla-Demo Realm"
 local r = Core.BeginSession(db, key, { level = 41, xp = 900, xpMax = 1000, money = 5000 }, 1000, false)
 eq("fresh login starts session", r.session.startedAt, 1000)
 eq("fresh login records start level", r.session.startLevel, 41)
@@ -97,6 +97,16 @@ eq("max level drops xpMax", r.xpMax, nil)
 local db2 = Core.InitDB(nil)
 r = Core.Update(db2, "Alt-Realm", { level = 3, xp = 10, xpMax = 100, money = 1 }, 50)
 eq("update without login starts session", r.session.startedAt, 50)
+
+-- A level cannot change its XP ceiling. When it seems to, the game is half
+-- way through a level-up and the snapshot is not to be trusted.
+do
+  local d = Core.InitDB(nil)
+  Core.BeginSession(d, "A-R", { level = 41, xp = 950, xpMax = 1000, money = 1 }, 10, false)
+  local rec = Core.Update(d, "A-R", { level = 41, xp = 200, xpMax = 1200, money = 1 }, 20)
+  eq("half-changed snapshot keeps old xp", rec.xp, 950)
+  eq("half-changed snapshot keeps old time", rec.updatedAt, 10)
+end
 
 -- Core: serialize -------------------------------------------------------
 local db3 = Core.InitDB(nil)

@@ -4,7 +4,7 @@
 local addonName, ns = ...
 local Core = ns.Core
 
-local ADDON_VERSION = "1.0.0"
+local ADDON_VERSION = "1.0.1"
 
 local db
 local key
@@ -52,8 +52,6 @@ local function snapshot()
   s.projectId = tonumber(WOW_PROJECT_ID)
 
   local level = tonumber((call(UnitLevel, "player"))) or 0
-  -- The game can report the old level for a moment after a level-up.
-  if pendingLevel > level then level = pendingLevel end
   if level > 0 then s.level = level end
 
   local cap = maxLevel()
@@ -70,9 +68,14 @@ local function snapshot()
   return s
 end
 
-local function record(begin, isReload)
+-- `final` is the logout record: the last chance to save, so it is never
+-- skipped.
+local function record(begin, isReload, final)
   if not db then return end
   local s = snapshot()
+  -- For a moment after a level-up the game reports the old level, and its XP
+  -- figures may belong to either level. Nothing read now can be trusted.
+  if not final and pendingLevel > (s.level or 0) then return end
   key = key or Core.Key(s.name, s.realm)
   if not key or not s.level then return end
   local now = tonumber((call(time))) or 0
@@ -83,6 +86,12 @@ local function record(begin, isReload)
     Core.Update(db, key, s, now)
   end
   Core.Serialize(db, ADDON_VERSION)
+end
+
+-- Events can arrive before the login event. Recording them would stamp the
+-- record with the current time and make a new day look like a reload.
+local function update()
+  if sessionBegun then record(false) end
 end
 
 local handlers = {}
@@ -110,17 +119,18 @@ function handlers.PLAYER_LEVEL_UP(newLevel)
   -- update that follows do the recording.
   pendingLevel = tonumber(newLevel) or pendingLevel
   if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
-    C_Timer.After(1, function() record(false) end)
+    C_Timer.After(1, update)
   end
 end
-
-local function update() record(false) end
 
 handlers.PLAYER_XP_UPDATE = update
 handlers.UPDATE_EXHAUSTION = update
 handlers.PLAYER_MONEY = update
 handlers.BAG_UPDATE_DELAYED = update
-handlers.PLAYER_LOGOUT = update
+
+function handlers.PLAYER_LOGOUT()
+  if sessionBegun then record(false, nil, true) end
+end
 
 local frame = CreateFrame("Frame")
 frame:SetScript("OnEvent", function(_, event, ...)
