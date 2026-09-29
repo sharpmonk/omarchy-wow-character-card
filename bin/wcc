@@ -4,7 +4,7 @@
 # recorded, notices when the game is running, and keeps the play-time log.
 # Every command prints JSON; the widget only draws what this prints.
 #
-# Usage: wcc <running|installs [--rescan]|characters|install-addon [install-path]>
+# Usage: wcc <running|installs [--rescan]|characters|sessions|status|tick|install-addon [install-path]>
 #
 # Environment (all optional, mainly for tests):
 #   WCC_STATE_DIR     where state is kept
@@ -14,6 +14,7 @@
 #   WCC_NOW           current time as epoch seconds
 #   WCC_CLK_TCK       clock ticks per second
 #   WCC_ADDON_SRC     the bundled addon folder
+#   WCC_DEMO          1 shows made-up characters, for screenshots
 
 set -o pipefail
 
@@ -355,6 +356,131 @@ cmd_characters() {
   done < <(install_paths) | jq -s -c 'sort_by(-.updatedAt)'
 }
 
+# ---------------------------------------------------------------- sessions
+
+read_sessions() {
+  if [[ -r $SESSIONS_FILE ]]; then
+    # A line cut short by a crash is skipped, not fatal.
+    jq -c -R 'fromjson? | select(type == "object"
+        and (.start | type) == "number" and (.last | type) == "number")' \
+      "$SESSIONS_FILE" 2>/dev/null | jq -s -c '.'
+  else
+    echo '[]'
+  fi
+}
+
+update_sessions() {
+  local running="$1" current updated
+  current=$(now)
+  updated=$(read_sessions | jq -c \
+    --argjson now "$current" \
+    --argjson running "$running" \
+    --argjson poll "$POLL_SECONDS" \
+    --argjson keep "$((KEEP_DAYS * 86400))" '
+    def close:
+      if .end == null then
+        .end = (if $now >= .last and ($now - .last) <= ($poll * 2) then $now else .last end)
+      else . end;
+    def same: $running != null and .pid == $running.pid and .pstart == $running.pstart;
+    (if $running == null then map(close)
+     elif any(.[]; same) then
+       map(if same then .end = null | .last = ([.last, $now] | max) else close end)
+     else
+       map(close) + [{
+         start: ([$running.started, $now] | min), last: $now, end: null,
+         flavor: $running.flavor, pid: $running.pid, pstart: $running.pstart
+       }]
+     end)
+    | map(select(.end == null or .end >= ($now - $keep)))
+    | .[]') || return 1
+  # Most polls change nothing; leave the disk alone when that is so.
+  [[ $updated == "$(cat "$SESSIONS_FILE" 2>/dev/null)" ]] && return 0
+  printf '%s' "${updated:+$updated$'\n'}" | write_atomic "$SESSIONS_FILE"
+}
+
+cmd_sessions() {
+  local current day dow today_start week_start
+  current=$(now)
+  day=$(date -d "@$current" +%F)
+  dow=$(date -d "@$current" +%u)
+  today_start=$(date -d "$day 00:00:00" +%s)
+  week_start=$(date -d "$day -$((dow - 1)) days 00:00:00" +%s)
+  read_sessions | jq -c \
+    --argjson now "$current" \
+    --argjson today "$today_start" \
+    --argjson week "$week_start" '
+    def finish: if .end == null then ([.last, $now] | max) else .end end;
+    def within($from): map([([finish, $now] | min) - ([.start, $from] | max), 0] | max) | add // 0;
+    {
+      current: (first(.[] | select(.end == null)) // null
+        | if . == null then null
+          else {start: .start, seconds: ([$now - .start, 0] | max), flavor: .flavor} end),
+      today: within($today),
+      week: within($week)
+    }'
+}
+
+# ------------------------------------------------------------------ status
+
+setup_state() {
+  jq -r -n --argjson installs "$1" --argjson characters "$2" '
+    if ($installs | length) == 0 then "no-install"
+    elif ($characters | length) == 0 then
+      (if any($installs[]; .addon == "missing") then "addon-missing" else "no-data" end)
+    elif any($installs[]; .addon == "outdated") then "addon-outdated"
+    else "ready" end'
+}
+
+# Made-up characters, so screenshots need not show anyone's real ones.
+cmd_demo() {
+  jq -c --argjson now "$(now)" '
+    .now = $now
+    | .session.start = ($now - .session.seconds)
+    | .running.started = .session.start
+    | .characters |= (to_entries | map(.value.updatedAt = ($now - .key * 86400) | .value))
+    | .characters[0].session.startedAt = .session.start' \
+    "$SELF_DIR/../demo/status.json"
+}
+
+cmd_status() {
+  if [[ ${WCC_DEMO:-} == 1 ]]; then
+    cmd_demo
+    return
+  fi
+  local running installs characters sessions
+  running=$(cmd_running)
+  installs=$(cmd_installs)
+  characters=$(cmd_characters)
+  sessions=$(cmd_sessions)
+  jq -n -c \
+    --argjson now "$(now)" \
+    --argjson running "$running" \
+    --argjson installs "$installs" \
+    --argjson characters "$characters" \
+    --argjson sessions "$sessions" \
+    --arg setup "$(setup_state "$installs" "$characters")" \
+    --arg version "$(bundled_version)" \
+    '{ok: true, now: $now, setup: $setup, addonVersion: $version,
+      running: $running, session: $sessions.current,
+      playtime: {today: $sessions.today, week: $sessions.week},
+      installs: $installs, characters: $characters}'
+}
+
+cmd_tick() {
+  if [[ ${WCC_DEMO:-} == 1 ]]; then
+    cmd_demo
+    return
+  fi
+  local running install
+  running=$(cmd_running)
+  if [[ $running != null ]]; then
+    install=$(jq -r '.install' <<<"$running")
+    learn_install "$install" "running"
+  fi
+  update_sessions "$running"
+  cmd_status
+}
+
 # ----------------------------------------------------------- install-addon
 
 install_addon_into() {
@@ -397,9 +523,12 @@ case "${1:-}" in
   running) cmd_running ;;
   installs) cmd_installs "${2:-}" ;;
   characters) cmd_characters ;;
+  sessions) cmd_sessions ;;
+  status) cmd_status ;;
+  tick) cmd_tick ;;
   install-addon) cmd_install_addon "${2:-}" ;;
   *)
-    echo "Usage: wcc <running|installs [--rescan]|characters|install-addon [install-path]>" >&2
+    echo "Usage: wcc <running|installs [--rescan]|characters|sessions|status|tick|install-addon [install-path]>" >&2
     exit 2
     ;;
 esac

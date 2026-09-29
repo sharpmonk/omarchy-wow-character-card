@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "now": 0,
+  "setup": "ready",
+  "addonVersion": "1.0.0",
+  "demo": true,
+  "running": { "pid": 1, "pstart": 1, "started": 0, "uid": "wow", "flavor": "_retail_", "label": "Retail", "install": "" },
+  "session": { "start": 0, "seconds": 4320, "flavor": "_retail_" },
+  "playtime": { "today": 4320, "week": 34800 },
+  "installs": [
+    { "path": "", "flavor": "_retail_", "label": "Retail", "source": "running", "addon": "ok", "addonVersion": "1.0.0", "hasData": true }
+  ],
+  "characters": [
+    {
+      "id": "demo/1", "key": "Exampla-Demo Realm", "name": "Exampla", "realm": "Demo Realm",
+      "class": "Monk", "race": "Pandaren", "faction": "Alliance",
+      "flavor": "_retail_", "label": "Retail",
+      "level": 42, "atMaxLevel": false, "xp": 61000, "xpMax": 100000, "rested": 18000,
+      "xpPercent": 61, "restedPercent": 18,
+      "money": 3124005, "moneyText": "312g 40s 5c", "bagsUsed": 71, "bagsTotal": 96,
+      "updatedAt": 0,
+      "session": { "startedAt": 0, "startLevel": 41, "levelsGained": 1, "xpGained": 84200, "moneyDelta": 125000, "moneyText": "12g 50s 0c" }
+    },
+    {
+      "id": "demo/2", "key": "Coinpurse-Demo Realm", "name": "Coinpurse", "realm": "Demo Realm",
+      "class": "Rogue", "race": "Goblin", "faction": "Horde",
+      "flavor": "_classic_", "label": "Classic",
+      "level": 5, "atMaxLevel": false, "xp": 300, "xpMax": 2800, "rested": 0,
+      "xpPercent": 10, "restedPercent": 0,
+      "money": 250, "moneyText": "2s 50c", "bagsUsed": 12, "bagsTotal": 16,
+      "updatedAt": 0, "session": null
+    },
+    {
+      "id": "demo/3", "key": "Elderoak-Demo Realm", "name": "Elderoak", "realm": "Demo Realm",
+      "class": "Druid", "race": "Tauren", "faction": "Horde",
+      "flavor": "_retail_", "label": "Retail",
+      "level": 80, "atMaxLevel": true,
+      "xpPercent": null, "restedPercent": null,
+      "money": 1840000000, "moneyText": "184000g 0s 0c", "bagsUsed": 140, "bagsTotal": 164,
+      "updatedAt": 0, "session": null
+    }
+  ]
+}

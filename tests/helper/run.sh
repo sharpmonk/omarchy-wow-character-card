@@ -38,7 +38,7 @@ sandbox() {
   export WCC_PROC_DIR="$SANDBOX/proc"
   export WCC_SEARCH_ROOTS="$SANDBOX/search"
   export WCC_NOW=1000000
-  unset WCC_EXTRA_DIRS
+  unset WCC_EXTRA_DIRS WCC_DEMO
   mkdir -p "$WCC_PROC_DIR" "$SANDBOX/search"
   echo "btime 900000" >"$WCC_PROC_DIR/stat"
   # The real folder name has spaces and brackets in it, so the fixtures do too.
@@ -412,6 +412,258 @@ test_install_addon_keeps_saved_data() {
   make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
   "$WCC" install-addon >/dev/null
   eq "data still read" "$("$WCC" characters | jq -r '.[0].name')" "Sharpmonk"
+}
+
+test_installs_learned_from_running_game() {
+  local install
+  install=$(make_install _classic_beta_)
+  make_proc 10 WowB.exe 'x -uid wow_classic_beta' "$install" 100
+  "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10"
+  local out
+  out=$("$WCC" installs)
+  eq "remembered after game closes" "$(jq -r '.[0].path' <<<"$out")" "$install"
+  eq "source" "$(jq -r '.[0].source' <<<"$out")" "running"
+  "$WCC" tick >/dev/null
+  eq "not listed twice" "$("$WCC" installs | jq length)" "1"
+}
+
+test_installs_vanished_folder() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 100
+  "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10" "$install"
+  eq "left out" "$("$WCC" installs | jq length)" "0"
+}
+
+# ----------------------------------------------------------------- sessions
+
+sessions_file() {
+  cat "$WCC_STATE_DIR/sessions.jsonl"
+}
+
+test_sessions_open_and_update() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 9999000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  WCC_NOW=1000030 "$WCC" tick >/dev/null
+  eq "one session" "$(sessions_file | wc -l)" "1"
+  eq "start is process start" "$(sessions_file | jq -r .start)" "999990"
+  eq "last seen moves" "$(sessions_file | jq -r .last)" "1000030"
+  eq "still open" "$(sessions_file | jq -r .end)" "null"
+  eq "current seconds" "$(WCC_NOW=1000030 "$WCC" sessions | jq -r .current.seconds)" "40"
+}
+
+test_sessions_close_when_game_exits() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10"
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  eq "closed at the poll that noticed" "$(sessions_file | jq -r .end)" "1000015"
+  eq "nothing current" "$(WCC_NOW=1000015 "$WCC" sessions | jq -r .current)" "null"
+}
+
+test_sessions_close_after_crash_or_power_loss() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10"
+  WCC_NOW=1009000 "$WCC" tick >/dev/null
+  eq "closed at last seen" "$(sessions_file | jq -r .end)" "1000015"
+}
+
+test_sessions_resume_after_shell_restart() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  # The shell was away for ten minutes; the same game is still running.
+  WCC_NOW=1000600 "$WCC" tick >/dev/null
+  eq "still one session" "$(sessions_file | wc -l)" "1"
+  eq "covers the gap" "$(sessions_file | jq -r .last)" "1000600"
+}
+
+test_sessions_reopen_same_process() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  mv "$WCC_PROC_DIR/10" "$SANDBOX/hidden"
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  mv "$SANDBOX/hidden" "$WCC_PROC_DIR/10"
+  WCC_NOW=1000030 "$WCC" tick >/dev/null
+  eq "not counted twice" "$(sessions_file | wc -l)" "1"
+  eq "open again" "$(sessions_file | jq -r .end)" "null"
+}
+
+test_sessions_new_game_is_new_session() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10"
+  make_proc 20 WoW.exe 'x -uid wow' "$install" 10001000
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  eq "two sessions" "$(sessions_file | wc -l)" "2"
+  eq "first closed" "$(sessions_file | head -n 1 | jq -r .end)" "1000015"
+  eq "second open" "$(sessions_file | tail -n 1 | jq -r .end)" "null"
+}
+
+test_sessions_idle_polls_do_not_write() {
+  "$WCC" tick >/dev/null
+  eq "no log while nothing has happened" "$([[ -e $WCC_STATE_DIR/sessions.jsonl ]] && echo yes || echo no)" "no"
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  rm -rf "$WCC_PROC_DIR/10"
+  WCC_NOW=1000015 "$WCC" tick >/dev/null
+  touch -d '2001-01-01' "$WCC_STATE_DIR/sessions.jsonl"
+  WCC_NOW=1000030 "$WCC" tick >/dev/null
+  eq "unchanged log is not rewritten" "$(date -r "$WCC_STATE_DIR/sessions.jsonl" +%Y)" "2001"
+}
+
+test_sessions_skip_damaged_lines() {
+  mkdir -p "$WCC_STATE_DIR"
+  {
+    echo '{"start":999000,"last":999600,"end":999600,"flavor":"_retail_","pid":1,"pstart":1}'
+    echo '{"start":999700,"last":9997'
+    echo 'not json at all'
+    echo '{"start":"bad","last":1,"end":1}'
+    echo '{"start":999800,"last":999900,"end":999900,"flavor":"_retail_","pid":2,"pstart":2}'
+  } >"$WCC_STATE_DIR/sessions.jsonl"
+  eq "good lines counted" "$(WCC_NOW=1000000 "$WCC" sessions | jq -r .week)" "700"
+  "$WCC" tick >/dev/null
+  eq "damaged lines dropped on next write" "$(sessions_file | wc -l)" "2"
+}
+
+# 1000000 is Mon 12 Jan 1970 13:46:40 UTC. Midnight that day is 950400, and it
+# is also the start of the week.
+test_sessions_totals_split_at_midnight() {
+  mkdir -p "$WCC_STATE_DIR"
+  {
+    # Sunday 23:00 to Monday 01:00: one hour belongs to today and this week.
+    echo '{"start":946800,"last":954000,"end":954000,"flavor":"_retail_","pid":1,"pstart":1}'
+    # Monday 10:00 to 10:30.
+    echo '{"start":986400,"last":988200,"end":988200,"flavor":"_retail_","pid":2,"pstart":2}'
+  } >"$WCC_STATE_DIR/sessions.jsonl"
+  local out
+  out=$(WCC_NOW=1000000 "$WCC" sessions)
+  eq "today" "$(jq -r .today <<<"$out")" "5400"
+  eq "week starts Monday" "$(jq -r .week <<<"$out")" "5400"
+}
+
+test_sessions_week_includes_earlier_days() {
+  mkdir -p "$WCC_STATE_DIR"
+  # Wednesday 14 Jan 1970 12:00 UTC = 1166400. Monday 10:00 to 11:00 = 986400..990000.
+  echo '{"start":986400,"last":990000,"end":990000,"flavor":"_retail_","pid":1,"pstart":1}' >"$WCC_STATE_DIR/sessions.jsonl"
+  local out
+  out=$(WCC_NOW=1166400 "$WCC" sessions)
+  eq "not today" "$(jq -r .today <<<"$out")" "0"
+  eq "this week" "$(jq -r .week <<<"$out")" "3600"
+}
+
+test_sessions_totals_include_open_session() {
+  mkdir -p "$WCC_STATE_DIR"
+  echo '{"start":999000,"last":999990,"end":null,"flavor":"_retail_","pid":1,"pstart":1}' >"$WCC_STATE_DIR/sessions.jsonl"
+  eq "counted up to now" "$(WCC_NOW=1000000 "$WCC" sessions | jq -r .today)" "1000"
+}
+
+test_sessions_local_timezone() {
+  mkdir -p "$WCC_STATE_DIR"
+  # In Auckland (UTC+12 in January 1970) 1000000 is already Tuesday 01:46.
+  # Local midnight was 993600, so only the last 1400 seconds count as today.
+  echo '{"start":992600,"last":995000,"end":995000,"flavor":"_retail_","pid":1,"pstart":1}' >"$WCC_STATE_DIR/sessions.jsonl"
+  eq "today follows local time" "$(TZ=Pacific/Auckland WCC_NOW=1000000 "$WCC" sessions | jq -r .today)" "1400"
+  eq "week follows local time" "$(TZ=Pacific/Auckland WCC_NOW=1000000 "$WCC" sessions | jq -r .week)" "2400"
+}
+
+test_sessions_clock_moved_backwards() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 10000000
+  WCC_NOW=1000000 "$WCC" tick >/dev/null
+  WCC_NOW=999000 "$WCC" tick >/dev/null
+  eq "last seen never goes back" "$(sessions_file | jq -r .last)" "1000000"
+  local out
+  out=$(WCC_NOW=999000 "$WCC" sessions)
+  eq "no negative today" "$(jq -r '.today >= 0' <<<"$out")" "true"
+  eq "no negative current" "$(jq -r '.current.seconds >= 0' <<<"$out")" "true"
+}
+
+test_sessions_old_ones_pruned() {
+  mkdir -p "$WCC_STATE_DIR"
+  {
+    echo '{"start":100,"last":200,"end":200,"flavor":"_retail_","pid":1,"pstart":1}'
+    echo '{"start":9999000,"last":9999100,"end":9999100,"flavor":"_retail_","pid":2,"pstart":2}'
+  } >"$WCC_STATE_DIR/sessions.jsonl"
+  WCC_NOW=10000000 "$WCC" tick >/dev/null
+  eq "only the recent one kept" "$(sessions_file | jq -r .start)" "9999000"
+}
+
+# ------------------------------------------------------------------- status
+
+test_status_setup_states() {
+  eq "no install" "$("$WCC" status | jq -r .setup)" "no-install"
+  local install
+  install=$(make_install _retail_)
+  export WCC_EXTRA_DIRS="$install"
+  eq "addon missing" "$("$WCC" status | jq -r .setup)" "addon-missing"
+  "$WCC" install-addon >/dev/null
+  eq "no data" "$("$WCC" status | jq -r .setup)" "no-data"
+  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  eq "ready" "$("$WCC" status | jq -r .setup)" "ready"
+  sed -i 's/^## Version:.*/## Version: 0.1.0/' "$install/Interface/AddOns/WoWCharacterCard/WoWCharacterCard.toc"
+  eq "addon outdated" "$("$WCC" status | jq -r .setup)" "addon-outdated"
+}
+
+test_status_shape() {
+  local install out
+  install=$(make_install _classic_beta_)
+  make_proc 10 WowB.exe 'x -uid wow_classic_beta' "$install" 9999000
+  make_data "$install" "111#1" "$(character Sharpmonk 42 300)"
+  out=$("$WCC" tick)
+  eq "ok" "$(jq -r .ok <<<"$out")" "true"
+  eq "running" "$(jq -r .running.label <<<"$out")" "Forever"
+  eq "session" "$(jq -r .session.seconds <<<"$out")" "10"
+  eq "playtime" "$(jq -r .playtime.today <<<"$out")" "10"
+  eq "character" "$(jq -r '.characters[0].name' <<<"$out")" "Sharpmonk"
+  eq "bundled version" "$(jq -r .addonVersion <<<"$out")" "1.0.0"
+}
+
+test_status_does_not_write() {
+  local install
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 100
+  "$WCC" status >/dev/null
+  eq "no session log" "$([[ -e $WCC_STATE_DIR/sessions.jsonl ]] && echo yes || echo no)" "no"
+  eq "no installs file" "$([[ -e $WCC_STATE_DIR/installs.json ]] && echo yes || echo no)" "no"
+}
+
+test_status_without_jq() {
+  local out
+  out=$(PATH=/nonexistent /bin/bash "$WCC" status)
+  eq "exit code" "$?" "3"
+  eq "names the tool" "$(echo "$out" | grep -c 'missing-jq')" "1"
+}
+
+test_status_demo_mode() {
+  local install out
+  install=$(make_install _retail_)
+  make_proc 10 WoW.exe 'x -uid wow' "$install" 100
+  out=$(WCC_DEMO=1 "$WCC" tick)
+  eq "made-up character" "$(jq -r '.characters[0].name' <<<"$out")" "Exampla"
+  eq "session ends now" "$(jq -r '.session.start + .session.seconds' <<<"$out")" "1000000"
+  eq "three characters" "$(jq -r '.characters | length' <<<"$out")" "3"
+  eq "writes nothing" "$([[ -e $WCC_STATE_DIR ]] && echo yes || echo no)" "no"
+  eq "status matches tick" "$(WCC_DEMO=1 "$WCC" status | jq -r .setup)" "ready"
 }
 
 # --------------------------------------------------------------------- main
