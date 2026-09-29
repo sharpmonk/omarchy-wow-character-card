@@ -6,7 +6,7 @@
   "author": "sharpmonk",
   "license": "MIT",
   "homepage": "https://github.com/sharpmonk/omarchy-wow-character-card",
-  "description": "Your World of Warcraft character in the bar: level, XP, gold, bags and time played. Works with Retail, Classic and WoW Forever. Needs jq and the bundled companion addon, which the panel installs for you. Unofficial; not affiliated with Blizzard Entertainment.",
+  "description": "Your World of Warcraft character in the bar: level, XP, gold, bags and time played. Works with Retail, Classic and WoW Forever. The card updates when you log out or type /reload in the game, so after switching games or characters it shows the previous one until then. Needs jq and the bundled companion addon, which the panel installs for you. Unofficial; not affiliated with Blizzard Entertainment.",
   "kinds": [
     "service",
     "bar-widget"

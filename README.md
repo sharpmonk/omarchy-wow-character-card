@@ -26,6 +26,11 @@ character, and the game saves that record when you log out or type `/reload`.
 So the card is a snapshot from your last logout or reload. The session clock
 is live, because it comes from watching the game process.
 
+This matters most when you switch games or characters. After starting a
+different game version, or logging in to a different character, the card keeps
+showing the previous one until you log out or type `/reload`. The panel tells
+you when it is waiting for this.
+
 Nothing is sent anywhere. The plugin makes no network connections.
 
 ## Requirements

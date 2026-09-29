@@ -111,9 +111,20 @@ Panel {
     return out
   }
 
-  // The bar always follows the last played character. The panel shows that
-  // one too until another is picked from the list.
-  readonly property var main: characters.length > 0 ? characters[0] : null
+  // The bar follows the last played character. While a game is running it
+  // keeps to that game's characters, so starting Retail does not leave a
+  // Forever character in the bar. The panel shows the same one until another
+  // is picked from the list.
+  readonly property var main: {
+    if (characters.length === 0) return null
+    if (running)
+      for (var i = 0; i < characters.length; i++)
+        if (characters[i].flavor === running.flavor) return characters[i]
+    return characters[0]
+  }
+  // The running game has saved nothing yet, so the card is from another one.
+  readonly property bool awaitingSave: running !== null && main !== null
+    && main.flavor !== running.flavor
   property string selectedId: ""
   readonly property var shown: {
     for (var i = 0; i < characters.length; i++)
@@ -344,6 +355,19 @@ Panel {
           character: root.shown
           foreground: root.foreground
           fontFamily: root.fontFamily
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: root.awaitingSave && root.shown !== null
+          text: "You are playing " + String(root.running ? root.running.label : "")
+            + ". Its card appears once you log out or type /reload in the game."
+          wrapMode: Text.WordWrap
+          color: root.foreground
+          opacity: 0.75
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
         }
 
         // A newer plugin may read fields an older addon does not write.
