@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -25,6 +26,11 @@ Panel {
   // U+F0787 nf-md-sword_cross, U+F0450 nf-md-refresh.
   readonly property string glyph: "\uDB81\uDF87"
   readonly property string refreshGlyph: "\uDB81\uDC50"
+
+  // A bar on a narrow or upright monitor has no room for the full face, so it
+  // drops the percentage and the clock and keeps the icon, level and XP bar.
+  readonly property real barLength: QsWindow.window ? QsWindow.window.width : 0
+  readonly property bool compact: barLength > 0 && barLength < 1400
 
   // ----------------------------------------------------------------- settings
 
@@ -231,7 +237,7 @@ Panel {
       Text {
         textFormat: Text.PlainText
         anchors.verticalCenter: parent.verticalCenter
-        visible: root.mainHasXp && root.showPercent
+        visible: root.mainHasXp && root.showPercent && !root.compact
         text: root.mainHasXp ? root.main.xpPercent + "%" : ""
         color: button.foreground
         font.family: button.fontFamily
@@ -241,7 +247,7 @@ Panel {
       Text {
         textFormat: Text.PlainText
         anchors.verticalCenter: parent.verticalCenter
-        visible: root.session !== null && root.showClock
+        visible: root.session !== null && root.showClock && !root.compact
         text: root.duration(root.sessionSeconds)
         color: button.foreground
         opacity: 0.7
