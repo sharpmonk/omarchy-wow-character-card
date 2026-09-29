@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "sharpmonk.wow-character-card",
+  "name": "WoW Character Card",
+  "version": "1.0.0",
+  "author": "sharpmonk",
+  "license": "MIT",
+  "homepage": "https://github.com/sharpmonk/omarchy-wow-character-card",
+  "description": "Your World of Warcraft character in the bar: level, XP, gold, bags and time played. Works with Retail, Classic and WoW Forever. Needs jq and the bundled companion addon, which the panel installs for you. Unofficial; not affiliated with Blizzard Entertainment.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
