@@ -159,6 +159,8 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      // The panel covers the spot the tooltip would be drawn in.
+      if (bar) bar.hideTooltip(button)
       nowMs = Date.now()
       if (service) service.refresh()
     } else {
@@ -189,7 +191,7 @@ Panel {
     hasVisualContent: true
     fixedWidth: root.vertical ? -1 : face.implicitWidth + scaledHorizontalMargin * 2
     dimmed: root.main === null
-    tooltipText: root.tooltip
+    tooltipText: root.opened ? "" : root.tooltip
     onPressed: root.toggle()
 
     Row {
