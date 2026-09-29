@@ -30,6 +30,8 @@ Item {
   property bool installing: false
   property bool searching: false
   property var installResults: []
+  // A refresh asked for while the helper was still running.
+  property bool refreshQueued: false
 
   readonly property int pollMs: 15000
 
@@ -46,7 +48,11 @@ Item {
   }
 
   function refresh() {
-    if (tickProc.running) return
+    if (tickProc.running) {
+      refreshQueued = true
+      return
+    }
+    refreshQueued = false
     tickProc.command = root.helper(["tick"])
     tickProc.running = true
   }
@@ -84,8 +90,8 @@ Item {
     root.loaded = true
   }
 
-  onWowFolderChanged: refresh()
-  onDemoChanged: refresh()
+  // Deferred, so the process has the new environment before it starts.
+  onHelperEnvironmentChanged: Qt.callLater(root.refresh)
 
   Timer {
     interval: root.pollMs
@@ -100,6 +106,9 @@ Item {
     environment: root.helperEnvironment
     stdout: StdioCollector {
       onStreamFinished: root.absorb(text)
+    }
+    onExited: function(exitCode) {
+      if (root.refreshQueued) Qt.callLater(root.refresh)
     }
   }
 

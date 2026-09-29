@@ -7,10 +7,52 @@
   "license": "MIT",
   "homepage": "https://github.com/sharpmonk/omarchy-wow-character-card",
   "description": "Your World of Warcraft character in the bar: level, XP, gold, bags and time played. Works with Retail, Classic and WoW Forever. Needs jq and the bundled companion addon, which the panel installs for you. Unofficial; not affiliated with Blizzard Entertainment.",
-  "kinds": [
-    "service"
-  ],
+  "kinds": ["service", "bar-widget"],
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "WoW Character Card",
+    "description": "Level and XP bar for your last played character, a session clock while you play, and a panel with gold, bags, session gains, play time and your other characters.",
+    "category": "Status",
+    "aliases": ["wow", "warcraft", "character", "xp"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "wowFolder": "",
+      "showClock": true,
+      "showPercent": true,
+      "hiddenCharacters": ""
+    },
+    "schema": [
+      {
+        "key": "wowFolder",
+        "type": "path",
+        "label": "WoW folder",
+        "defaultValue": "",
+        "description": "Optional. Your World of Warcraft folder, the one holding _retail_ or _classic_. Leave blank to have it found the first time you launch the game."
+      },
+      {
+        "key": "showClock",
+        "type": "boolean",
+        "label": "Show session clock in the bar",
+        "defaultValue": true,
+        "description": "While WoW is running, show how long this session has lasted next to the XP bar."
+      },
+      {
+        "key": "showPercent",
+        "type": "boolean",
+        "label": "Show XP percentage in the bar",
+        "defaultValue": true
+      },
+      {
+        "key": "hiddenCharacters",
+        "type": "string",
+        "label": "Characters to hide",
+        "defaultValue": "",
+        "description": "Names separated by commas, for example: Bankalt, Mule. Hidden characters never appear in the bar or the list."
+      }
+    ]
   }
 }
