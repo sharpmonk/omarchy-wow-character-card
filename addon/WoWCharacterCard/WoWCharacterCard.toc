@@ -1,0 +1,11 @@
+## Interface: 120100, 120105, 16001, 50504, 40402, 38000, 30404, 20506, 11508, 11509
+## Title: WoW Character Card
+## Notes: Records your character's level, XP, gold and bags for the WoW Character Card desktop widget. Has no in-game window.
+## Author: sharpmonk
+## Version: 1.0.0
+## SavedVariables: WoWCharacterCardDB
+
+Json.lua
+Base64.lua
+Core.lua
+Events.lua
