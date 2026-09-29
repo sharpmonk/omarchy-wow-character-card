@@ -30,11 +30,16 @@ Panel {
   // A bar on a narrow or upright monitor has no room for the full face, so it
   // drops the percentage and the clock and keeps the icon, level and XP bar.
   readonly property real barLength: QsWindow.window ? QsWindow.window.width : 0
-  readonly property bool compact: barLength > 0 && barLength < 1400
+  readonly property bool compact: {
+    if (barFace === "Compact") return true
+    if (barFace === "Full") return false
+    return barLength > 0 && barLength < 1400
+  }
 
   // ----------------------------------------------------------------- settings
 
   readonly property string wowFolder: String(setting("wowFolder", ""))
+  readonly property string barFace: String(setting("barFace", "Auto"))
   readonly property bool showClock: setting("showClock", true) === true
   readonly property bool showPercent: setting("showPercent", true) === true
   readonly property var hiddenNames: {
@@ -115,6 +120,27 @@ Panel {
       if (characters[i].id === selectedId) return characters[i]
     return main
   }
+  readonly property var shownSession: shown && shown.session ? shown.session : null
+
+  // The addon is out of date, or a version that has been played lacks it.
+  readonly property bool addonWanted: helperSetup === "addon-outdated"
+    || helperSetup === "addon-missing-some"
+  readonly property string addonNotice: {
+    if (helperSetup === "addon-outdated") return "A newer addon is ready"
+    for (var i = 0; i < installs.length; i++)
+      if (installs[i].addon === "missing" && installs[i].played === true)
+        return String(installs[i].label || "A game version") + " has no addon yet"
+    return ""
+  }
+  readonly property string addonFailure: {
+    var results = service ? service.installResults : []
+    var failed = []
+    for (var i = 0; i < results.length; i++)
+      if (results[i] && results[i].ok !== true) failed.push(String(results[i].path || ""))
+    if (failed.length === 0) return ""
+    return "The addon could not be copied into:\n" + failed.join("\n") + "\nCheck that the folder can be written to."
+  }
+
   readonly property var others: {
     var out = []
     for (var i = 0; i < characters.length; i++)
@@ -324,7 +350,7 @@ Panel {
         Item {
           width: parent.width
           height: updateButton.implicitHeight
-          visible: root.shown !== null && root.helperSetup === "addon-outdated"
+          visible: root.shown !== null && root.addonWanted
 
           Text {
             textFormat: Text.PlainText
@@ -332,7 +358,7 @@ Panel {
             anchors.right: updateButton.left
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
-            text: "A newer addon is ready"
+            text: root.addonNotice
             elide: Text.ElideRight
             color: root.foreground
             opacity: 0.75
@@ -345,11 +371,22 @@ Panel {
             anchors.right: parent.right
             bordered: true
             enabled: !(root.service && root.service.installing)
-            text: "Update addon"
+            text: root.helperSetup === "addon-outdated" ? "Update addon" : "Install addon"
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: if (root.service) root.service.installAddon()
           }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: root.shown !== null && root.addonFailure !== ""
+          text: root.addonFailure
+          wrapMode: Text.WrapAnywhere
+          color: Color.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
         }
 
         // ------------------------------------------------- last session
@@ -363,8 +400,7 @@ Panel {
           id: lastSession
           width: parent.width
           spacing: Style.space(4)
-          visible: root.shown !== null && root.shown.session !== null
-            && root.shown.session !== undefined
+          visible: root.shownSession !== null
 
           PanelSectionHeader {
             text: "LAST SESSION"
@@ -374,26 +410,26 @@ Panel {
 
           StatRow {
             label: "Levels"
-            value: lastSession.visible && Number(root.shown.session.levelsGained || 0) > 0
-              ? "+" + root.shown.session.levelsGained : ""
+            value: root.shownSession && Number(root.shownSession.levelsGained || 0) > 0
+              ? "+" + root.shownSession.levelsGained : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
 
           StatRow {
             label: "XP"
-            value: lastSession.visible ? root.signed(root.shown.session.xpGained) : ""
+            value: root.shownSession ? root.signed(root.shownSession.xpGained) : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
 
           StatRow {
             label: "Gold"
-            value: lastSession.visible
-              ? (Number(root.shown.session.moneyDelta || 0) > 0 ? "+" : "")
-                + String(root.shown.session.moneyText || "")
+            value: root.shownSession
+              ? (Number(root.shownSession.moneyDelta || 0) > 0 ? "+" : "")
+                + String(root.shownSession.moneyText || "")
               : ""
-            valueColor: lastSession.visible && Number(root.shown.session.moneyDelta || 0) < 0
+            valueColor: root.shownSession && Number(root.shownSession.moneyDelta || 0) < 0
               ? Color.urgent : root.foreground
             foreground: root.foreground
             fontFamily: root.fontFamily

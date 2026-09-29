@@ -54,12 +54,13 @@ If the game is not found, press **Search for WoW** in the panel, or set
 | Setting | What it does |
 |---|---|
 | WoW folder | Where WoW is installed. Leave blank to have it found for you |
+| Bar face | Full, Compact, or Auto. Auto uses Compact on a narrow or upright monitor |
 | Show session clock in the bar | Shows the session length while you play |
 | Show XP percentage in the bar | Shows the figure next to the XP bar |
 | Characters to hide | Names, separated by commas, to leave out |
 
-On a narrow or upright monitor the bar shows a compact face: icon, level and
-XP bar. The percentage and clock are still in the panel.
+The compact face shows the icon, level and XP bar. The percentage and clock
+are still in the panel.
 
 ## Remove
 

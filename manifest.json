@@ -7,7 +7,10 @@
   "license": "MIT",
   "homepage": "https://github.com/sharpmonk/omarchy-wow-character-card",
   "description": "Your World of Warcraft character in the bar: level, XP, gold, bags and time played. Works with Retail, Classic and WoW Forever. Needs jq and the bundled companion addon, which the panel installs for you. Unofficial; not affiliated with Blizzard Entertainment.",
-  "kinds": ["service", "bar-widget"],
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
   "entryPoints": {
     "service": "Service.qml",
     "barWidget": "Widget.qml"
@@ -16,14 +19,20 @@
     "displayName": "WoW Character Card",
     "description": "Level and XP bar for your last played character, a session clock while you play, and a panel with gold, bags, session gains, play time and your other characters.",
     "category": "Status",
-    "aliases": ["wow", "warcraft", "character", "xp"],
+    "aliases": [
+      "wow",
+      "warcraft",
+      "character",
+      "xp"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "wowFolder": "",
       "showClock": true,
       "showPercent": true,
-      "hiddenCharacters": ""
+      "hiddenCharacters": "",
+      "barFace": "Auto"
     },
     "schema": [
       {
@@ -32,6 +41,18 @@
         "label": "WoW folder",
         "defaultValue": "",
         "description": "Optional. Your World of Warcraft folder, the one holding _retail_ or _classic_. Leave blank to have it found the first time you launch the game."
+      },
+      {
+        "key": "barFace",
+        "type": "enum",
+        "label": "Bar face",
+        "options": [
+          "Auto",
+          "Full",
+          "Compact"
+        ],
+        "defaultValue": "Auto",
+        "description": "Full shows the level, XP bar, percentage and session clock. Compact shows the level and XP bar only. Auto uses Compact on a narrow or upright monitor."
       },
       {
         "key": "showClock",

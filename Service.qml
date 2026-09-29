@@ -39,7 +39,7 @@ Item {
     decodeURIComponent(Qt.resolvedUrl("bin/wcc").toString().replace(/^file:\/\//, ""))
 
   readonly property var helperEnvironment: ({
-    "WCC_EXTRA_DIRS": root.wowFolder,
+    "WCC_WOW_DIR": root.wowFolder,
     "WCC_DEMO": root.demo ? "1" : "0"
   })
 
