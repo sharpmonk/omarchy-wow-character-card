@@ -1,0 +1,405 @@
+#!/bin/bash
+
+# WoW Character Card helper. Finds WoW installs, reads what the companion addon
+# recorded, notices when the game is running, and keeps the play-time log.
+# Every command prints JSON; the widget only draws what this prints.
+#
+# Usage: wcc <running|installs [--rescan]|characters|install-addon [install-path]>
+#
+# Environment (all optional, mainly for tests):
+#   WCC_STATE_DIR     where state is kept
+#   WCC_EXTRA_DIRS    extra WoW folders from settings, separated by ':'
+#   WCC_SEARCH_ROOTS  folders searched by `installs --rescan`, separated by ':'
+#   WCC_PROC_DIR      process table to read instead of /proc
+#   WCC_NOW           current time as epoch seconds
+#   WCC_CLK_TCK       clock ticks per second
+#   WCC_ADDON_SRC     the bundled addon folder
+
+set -o pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo '{"ok":false,"error":"missing-jq","message":"jq is not installed. Install it with: omarchy pkg add jq"}'
+  exit 3
+fi
+
+STATE_DIR="${WCC_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/wow-character-card}"
+PROC_DIR="${WCC_PROC_DIR:-/proc}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ADDON_NAME="WoWCharacterCard"
+ADDON_SRC="${WCC_ADDON_SRC:-$SELF_DIR/../addon/$ADDON_NAME}"
+INSTALLS_FILE="$STATE_DIR/installs.json"
+SESSIONS_FILE="$STATE_DIR/sessions.jsonl"
+CACHE_DIR="$STATE_DIR/cache"
+POLL_SECONDS=15
+KEEP_DAYS=90
+
+now() {
+  echo "${WCC_NOW:-$(date +%s)}"
+}
+
+write_atomic() {
+  local target="$1" tmp
+  mkdir -p "$(dirname "$target")" || return 1
+  tmp=$(mktemp "$target.XXXXXX") || return 1
+  cat > "$tmp" && mv -f "$tmp" "$target"
+}
+
+# ---------------------------------------------------------------- installs
+
+flavor_label() {
+  case "$1" in
+    _retail_) echo "Retail" ;;
+    _classic_) echo "Classic" ;;
+    _classic_era_) echo "Classic Era" ;;
+    _classic_beta_) echo "Forever" ;;
+    _beta_) echo "Retail Beta" ;;
+    _ptr_ | _xptr_) echo "Retail PTR" ;;
+    _classic_ptr_) echo "Classic PTR" ;;
+    _classic_era_ptr_) echo "Classic Era PTR" ;;
+    *)
+      local tidy="${1//_/ }"
+      tidy="${tidy#"${tidy%%[![:space:]]*}"}"
+      tidy="${tidy%"${tidy##*[![:space:]]}"}"
+      echo "${tidy:-Unknown}"
+      ;;
+  esac
+}
+
+# A folder the game is running from: both data folders are present.
+is_running_install() {
+  [[ -d $1/WTF && -d $1/Interface ]]
+}
+
+# A version folder found on disk. The game may never have been started, so one
+# of the two data folders is enough.
+is_flavor_dir() {
+  local name
+  name=$(basename "$1")
+  [[ $name == _*_ ]] && [[ -d $1/Interface || -d $1/WTF ]]
+}
+
+stored_installs() {
+  if [[ -r $INSTALLS_FILE ]]; then
+    jq -c 'if type == "array" then map(select(type == "object" and (.path | type) == "string")) else [] end' \
+      "$INSTALLS_FILE" 2>/dev/null || echo '[]'
+  else
+    echo '[]'
+  fi
+}
+
+learn_install() {
+  local path="$1" source="$2" current
+  current=$(stored_installs)
+  if jq -e --arg p "$path" 'any(.[]; .path == $p)' <<<"$current" >/dev/null; then
+    return 0
+  fi
+  jq -c --arg p "$path" --arg s "$source" '. + [{path: $p, source: $s}]' <<<"$current" \
+    | write_atomic "$INSTALLS_FILE"
+}
+
+# Prints one version folder per line for a folder the player named, which may
+# be a version folder or the "World of Warcraft" folder above them.
+expand_install_dir() {
+  local dir="${1%/}" sub
+  [[ -d $dir ]] || return 0
+  if is_flavor_dir "$dir"; then
+    echo "$dir"
+    return 0
+  fi
+  for sub in "$dir"/_*_; do
+    [[ -d $sub ]] && is_flavor_dir "$sub" && echo "$sub"
+  done
+  return 0
+}
+
+manual_installs() {
+  local dirs=() dir
+  [[ -n ${WCC_EXTRA_DIRS:-} ]] || return 0
+  IFS=':' read -r -a dirs <<<"$WCC_EXTRA_DIRS"
+  for dir in "${dirs[@]}"; do
+    [[ -n $dir ]] || continue
+    expand_install_dir "${dir/#\~/$HOME}"
+  done
+}
+
+default_search_roots() {
+  printf '%s\n' \
+    "$HOME/Games" \
+    "$HOME/.wine" \
+    "$HOME/.local/share/lutris" \
+    "$HOME/.local/share/bottles/bottles" \
+    "$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles" \
+    "$HOME/Faugus" \
+    "$HOME/.local/share/Steam/steamapps/compatdata" \
+    "$HOME/.steam/steam/steamapps/compatdata"
+}
+
+rescan_installs() {
+  local roots=() root wow_root
+  if [[ -n ${WCC_SEARCH_ROOTS:-} ]]; then
+    IFS=':' read -r -a roots <<<"$WCC_SEARCH_ROOTS"
+  else
+    mapfile -t roots < <(default_search_roots)
+  fi
+  for root in "${roots[@]}"; do
+    [[ -d $root ]] || continue
+    while IFS= read -r -d '' wow_root; do
+      while IFS= read -r flavor_dir; do
+        [[ -n $flavor_dir ]] && learn_install "$flavor_dir" "search"
+      done < <(expand_install_dir "$wow_root")
+    done < <(timeout 20 find "$root" -maxdepth 9 -type d -name 'World of Warcraft' -print0 2>/dev/null)
+  done
+}
+
+# One install path per line: remembered ones first, then the player's own.
+# Folders that have gone away are left out.
+install_paths() {
+  {
+    stored_installs | jq -r '.[].path'
+    manual_installs
+  } | awk 'NF && !seen[$0]++' | while IFS= read -r path; do
+    [[ -d $path ]] && echo "$path"
+  done
+}
+
+install_source() {
+  local path="$1" source
+  source=$(stored_installs | jq -r --arg p "$path" 'first(.[] | select(.path == $p) | .source) // "manual"')
+  echo "${source:-manual}"
+}
+
+toc_version() {
+  local toc="$1"
+  [[ -r $toc ]] || return 0
+  sed -n 's/^## *Version: *//p' "$toc" | head -n 1 | tr -d '\r'
+}
+
+bundled_version() {
+  toc_version "$ADDON_SRC/$ADDON_NAME.toc"
+}
+
+addon_state() {
+  local path="$1" installed bundled
+  installed=$(toc_version "$path/Interface/AddOns/$ADDON_NAME/$ADDON_NAME.toc")
+  bundled=$(bundled_version)
+  if [[ ! -d $path/Interface/AddOns/$ADDON_NAME ]]; then
+    echo "missing"
+  elif [[ -n $bundled && $installed != "$bundled" ]] \
+    && [[ $(printf '%s\n%s\n' "$installed" "$bundled" | sort -V | head -n 1) == "$installed" ]]; then
+    echo "outdated"
+  else
+    echo "ok"
+  fi
+}
+
+data_files() {
+  local path="$1" file
+  for file in "$path"/WTF/Account/*/SavedVariables/"$ADDON_NAME".lua; do
+    [[ -f $file ]] && echo "$file"
+  done
+}
+
+cmd_installs() {
+  [[ ${1:-} == --rescan ]] && rescan_installs
+  local path flavor
+  while IFS= read -r path; do
+    flavor=$(basename "$path")
+    jq -n -c \
+      --arg path "$path" \
+      --arg flavor "$flavor" \
+      --arg label "$(flavor_label "$flavor")" \
+      --arg source "$(install_source "$path")" \
+      --arg addon "$(addon_state "$path")" \
+      --arg version "$(toc_version "$path/Interface/AddOns/$ADDON_NAME/$ADDON_NAME.toc")" \
+      --argjson hasData "$([[ -n $(data_files "$path") ]] && echo true || echo false)" \
+      '{path: $path, flavor: $flavor, label: $label, source: $source,
+        addon: $addon, addonVersion: $version, hasData: $hasData}'
+  done < <(install_paths) | jq -s -c '.'
+}
+
+# ----------------------------------------------------------------- running
+
+proc_start_ticks() {
+  local stat fields=()
+  stat=$(cat "$1/stat" 2>/dev/null) || { echo 0; return; }
+  # The process name sits in brackets and may itself contain brackets or
+  # spaces, so count fields from after the last closing bracket.
+  stat="${stat##*) }"
+  read -r -a fields <<<"$stat"
+  echo "${fields[19]:-0}"
+}
+
+boot_time() {
+  awk '$1 == "btime" { print $2; found = 1 } END { if (!found) print 0 }' "$PROC_DIR/stat" 2>/dev/null || echo 0
+}
+
+cmd_running() {
+  local dir comm cwd ticks best_dir="" best_ticks=-1 best_cwd=""
+  for dir in "$PROC_DIR"/[0-9]*; do
+    [[ -r $dir/comm ]] || continue
+    read -r comm <"$dir/comm" 2>/dev/null || continue
+    # The launcher, the voice proxy and the crash reporter are not the game.
+    [[ ${comm,,} =~ ^wow(classic)?[tb]?\.exe$ ]] || continue
+    cwd=$(readlink -f "$dir/cwd" 2>/dev/null) || continue
+    is_running_install "$cwd" || continue
+    ticks=$(proc_start_ticks "$dir")
+    if ((ticks > best_ticks)); then
+      best_dir="$dir" best_ticks="$ticks" best_cwd="$cwd"
+    fi
+  done
+
+  if [[ -z $best_dir ]]; then
+    echo 'null'
+    return 0
+  fi
+
+  local cmdline uid="" flavor boot clk started current
+  cmdline=$(tr '\0' ' ' <"$best_dir/cmdline" 2>/dev/null)
+  [[ $cmdline =~ -uid[[:space:]]+([A-Za-z0-9_]+) ]] && uid="${BASH_REMATCH[1]}"
+  flavor=$(basename "$best_cwd")
+  current=$(now)
+  boot=$(boot_time)
+  clk="${WCC_CLK_TCK:-$(getconf CLK_TCK 2>/dev/null || echo 100)}"
+  if ((boot > 0 && clk > 0)); then
+    started=$((boot + best_ticks / clk))
+  else
+    started=$current
+  fi
+  ((started > current)) && started=$current
+
+  jq -n -c \
+    --argjson pid "$(basename "$best_dir")" \
+    --argjson pstart "$best_ticks" \
+    --argjson started "$started" \
+    --arg uid "$uid" \
+    --arg flavor "$flavor" \
+    --arg label "$(flavor_label "$flavor")" \
+    --arg install "$best_cwd" \
+    '{pid: $pid, pstart: $pstart, started: $started, uid: $uid,
+      flavor: $flavor, label: $label, install: $install}'
+}
+
+# -------------------------------------------------------------- characters
+
+cache_file() {
+  echo "$CACHE_DIR/$(printf '%s' "$1" | sha1sum | cut -c1-16).json"
+}
+
+# Prints the addon's JSON for one saved file. A file that is damaged or only
+# half written falls back to the last good copy.
+read_data_file() {
+  local file="$1" encoded json cache
+  cache=$(cache_file "$file")
+  encoded=$(grep -m 1 -oE '\["data"\] = "[A-Za-z0-9+/=]+"' "$file" 2>/dev/null | sed -E 's/^.*= "//; s/"$//')
+  json=""
+  if [[ -n $encoded ]]; then
+    json=$(printf '%s' "$encoded" | base64 -d 2>/dev/null \
+      | jq -c 'select(type == "object" and (.characters | type) == "object")' 2>/dev/null)
+  fi
+  if [[ -n $json ]]; then
+    printf '%s\n' "$json" | write_atomic "$cache"
+    printf '%s\n' "$json"
+  elif [[ -r $cache ]]; then
+    cat "$cache"
+  fi
+}
+
+cmd_characters() {
+  local path file flavor account json
+  while IFS= read -r path; do
+    flavor=$(basename "$path")
+    while IFS= read -r file; do
+      account=$(basename "$(dirname "$(dirname "$file")")")
+      json=$(read_data_file "$file")
+      [[ -n $json ]] || continue
+      jq -c \
+        --arg flavor "$flavor" \
+        --arg label "$(flavor_label "$flavor")" \
+        --arg account "$account" \
+        --arg install "$path" '
+        def coins:
+          (if . < 0 then "-" else "" end) as $sign
+          | (if . < 0 then -. else . end | floor) as $c
+          | [ (if $c >= 10000 then "\($c / 10000 | floor)g" else empty end),
+              (if $c >= 100 then "\($c % 10000 / 100 | floor)s" else empty end),
+              "\($c % 100)c" ]
+          | $sign + join(" ");
+        def percent($part; $whole):
+          if ($part | type) == "number" and ($whole | type) == "number" and $whole > 0
+          then ($part * 100 / $whole | floor) else null end;
+        .addonVersion as $version
+        | .characters | to_entries[]
+        | select(.value | type == "object")
+        | .key as $key | .value
+        | select((.name | type) == "string" and (.level | type) == "number")
+        | . + {
+            key: $key,
+            id: "\($flavor)/\($account)/\($key)",
+            flavor: $flavor,
+            label: (if $flavor == "_classic_beta_" and (.interface | type) == "number"
+                      and (.interface < 16000 or .interface >= 17000)
+                    then "Classic Beta" else $label end),
+            install: $install,
+            addonVersion: ($version // ""),
+            updatedAt: (.updatedAt // 0),
+            xpPercent: percent(.xp; .xpMax),
+            restedPercent: percent(.rested; .xpMax),
+            moneyText: (if (.money | type) == "number" then (.money | coins) else "" end),
+            session: (if (.session | type) == "object" then .session + {
+                levelsGained: (if (.session.startLevel | type) == "number"
+                               then ([.level - .session.startLevel, 0] | max) else 0 end),
+                moneyText: ((.session.moneyDelta // 0) | coins)
+              } else null end)
+          }' <<<"$json"
+    done < <(data_files "$path")
+  done < <(install_paths) | jq -s -c 'sort_by(-.updatedAt)'
+}
+
+# ----------------------------------------------------------- install-addon
+
+install_addon_into() {
+  local path="${1%/}" target
+  target="$path/Interface/AddOns/$ADDON_NAME"
+  if ! is_flavor_dir "$path"; then
+    jq -n -c --arg p "$path" '{path: $p, ok: false, error: "not-a-wow-folder"}'
+    return 0
+  fi
+  if [[ ! -r $ADDON_SRC/$ADDON_NAME.toc ]]; then
+    jq -n -c --arg p "$path" '{path: $p, ok: false, error: "bundled-addon-missing"}'
+    return 0
+  fi
+  # Only ever replace this addon's own folder.
+  if [[ $target != */Interface/AddOns/"$ADDON_NAME" ]]; then
+    jq -n -c --arg p "$path" '{path: $p, ok: false, error: "unsafe-target"}'
+    return 0
+  fi
+  if mkdir -p "$path/Interface/AddOns" && rm -rf -- "$target" && cp -r -- "$ADDON_SRC" "$target"; then
+    jq -n -c --arg p "$path" --arg v "$(bundled_version)" '{path: $p, ok: true, version: $v}'
+  else
+    jq -n -c --arg p "$path" '{path: $p, ok: false, error: "copy-failed"}'
+  fi
+}
+
+cmd_install_addon() {
+  if [[ -n ${1:-} ]]; then
+    install_addon_into "$1" | jq -s -c '.'
+    return 0
+  fi
+  local path
+  while IFS= read -r path; do
+    install_addon_into "$path"
+  done < <(install_paths) | jq -s -c '.'
+}
+
+# -------------------------------------------------------------------- main
+
+case "${1:-}" in
+  running) cmd_running ;;
+  installs) cmd_installs "${2:-}" ;;
+  characters) cmd_characters ;;
+  install-addon) cmd_install_addon "${2:-}" ;;
+  *)
+    echo "Usage: wcc <running|installs [--rescan]|characters|install-addon [install-path]>" >&2
+    exit 2
+    ;;
+esac
